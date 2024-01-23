@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import socketIOClient from "socket.io-client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Home from "./pages/home";
-import Stream from "./pages/stream";
+import Stream from "./pages/stream1";
 import Upload from "./pages/upload";
 import Chat from "./pages/chat";
 const ENDPOINT = "http://localhost:8000";
@@ -24,7 +24,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/streaming" element={<Stream socket={socket} />} />
+        <Route path="/streaming" element={<Stream />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/chat" element={<Chat socket={socket} />} />
       </Routes>
