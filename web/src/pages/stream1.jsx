@@ -45,8 +45,8 @@ function Stream() {
   };
 
   // stream 관련
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
+  const roomNameRef = useRef(null);
+  const streamRef = useRef(null);
   const audioParams = useRef(null);
   const videoParams = useRef({ params });
 
@@ -55,14 +55,11 @@ function Stream() {
     socket.current = socketIOClient(MEDIASOUP);
 
     // S1.소켓 연결 완료 수신
-    socket.current.on(
-      "connection-success",
-      async ({ socketId: id, existsProducer }) => {
-        console.log(`connection-success: ${socketId}, ${existsProducer}`);
-        socketId.current = id;
-        console.log(`SocketId is ${socketId.current}`);
-      }
-    );
+    socket.current.on("connection-success", async ({ socketId: id }) => {
+      console.log(`connection-success: ${socketId}`);
+      socketId.current = id;
+      console.log(`SocketId is ${socketId.current}`);
+    });
 
     return () => {
       socket.current.disconnect();
@@ -70,7 +67,7 @@ function Stream() {
   }, []);
 
   // P1.로컬 사용자 스트림 획득
-  const getLocalStream = () => {
+  const goStream = () => {
     navigator.mediaDevices
       .getUserMedia({
         audio: true,
@@ -93,7 +90,7 @@ function Stream() {
 
   // P2.로컬 비디오 엘리먼트에 획득한 로컬 사용자 스트림 대입
   const streamSuccess = (stream) => {
-    localVideoRef.current.srcObject = stream;
+    streamRef.current.srcObject = stream;
 
     audioParams.current = {
       track: stream.getAudioTracks()[0],
@@ -115,22 +112,51 @@ function Stream() {
   // T1.생산자인지 소비자인지 판단
   const goConnect = (producerOrConsumer) => {
     isProducer = producerOrConsumer;
-    device === undefined ? getRtpCapabilities() : goCreateTransport();
+    if (isProducer) {
+      createRoom();
+    } else {
+      joinRoom();
+    }
+    //device === undefined ? getRtpCapabilities() : goCreateTransport();
   };
 
-  // T2.RtpCapabilities 서버에게 요청
-  const getRtpCapabilities = () => {
-    socket.current.emit("createRoom", (data) => {
-      console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
+  // P3.createRoom 서버에게 요청
+  const createRoom = () => {
+    console.log(`createRoom, roomName is ${roomNameRef.current.value}`);
+    socket.current.emit(
+      "createRoom",
+      { roomName: roomNameRef.current.value, socketId: socketId.current },
+      (data) => {
+        console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
 
-      rtpCapabilities = data.rtpCapabilities;
+        // getRtoCapabilities
+        rtpCapabilities = data.rtpCapabilities;
 
-      createDevice();
-    });
-    console.log("getRtpCapabilities");
+        createDevice();
+      }
+    );
+    console.log("createRoom");
   };
 
-  // T3.Device 생성
+  // C2.joinRoom 서버에게 요청
+  const joinRoom = () => {
+    console.log(`joinRoom, roomName is ${roomNameRef.current.value}`);
+    socket.current.emit(
+      "joinRoom",
+      { roomName: roomNameRef.current.value, socketId: socketId.current },
+      (data) => {
+        console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
+
+        // getRtoCapabilities
+        rtpCapabilities = data.rtpCapabilities;
+
+        createDevice();
+      }
+    );
+    console.log("joinRoom");
+  };
+
+  // T2.Device 생성
   const createDevice = async () => {
     try {
       device = new mediasoupClient.Device();
@@ -139,7 +165,7 @@ function Stream() {
         routerRtpCapabilities: rtpCapabilities,
       });
 
-      console.log("RTP Capabilities", device.rtpCapabilities);
+      console.log("Device RTP Capabilities", device.rtpCapabilities);
 
       goCreateTransport();
     } catch (error) {
@@ -149,7 +175,7 @@ function Stream() {
     }
   };
 
-  // T4.생성자, 소비자에 맞는 Transport 생성 함수 호출
+  // T3.생성자, 소비자에 맞는 Transport 생성 함수 호출
   const goCreateTransport = () => {
     isProducer ? createSendTransport() : createRecvTransport();
   };
@@ -289,7 +315,10 @@ function Stream() {
 
         const { track } = consumer;
 
-        remoteVideoRef.current.srcObject = new MediaStream([track]);
+        streamRef.current.srcObject = new MediaStream([track]);
+
+        // 로그에 트랙 정보 출력
+        console.log("Consumer Track Info:", track);
 
         socket.current.emit("consumer-resume");
       }
@@ -298,11 +327,9 @@ function Stream() {
 
   return (
     <div>
-      {/* 로컬 비디오 UI */}
-      <video ref={localVideoRef} autoPlay playsInline></video>
-      <video ref={remoteVideoRef} autoPlay playsInline></video>
-      {/* 스트림 관련 */}
-      <button onClick={getLocalStream}>Publish</button>
+      <video ref={streamRef} autoPlay playsInline></video>
+      <input ref={roomNameRef} placeholder="Enter room name" />
+      <button onClick={goStream}>Publish</button>
       <button onClick={goConsume}>Consume</button>
     </div>
   );
