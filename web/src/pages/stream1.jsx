@@ -1,13 +1,15 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useRef } from "react";
 import socketIOClient from "socket.io-client";
 import * as mediasoupClient from "mediasoup-client";
 
 const MEDIASOUP = "http://localhost:8000/mediasoup";
 
 function Stream() {
-  const [socket, setSocket] = useState(null);
-  const [socketId, setSocketId] = useState(null);
+  // socket 관련
+  const socket = useRef();
+  const socketId = useRef();
 
+  // mediasoup 관련
   let device;
   let rtpCapabilities;
   let producerTransport;
@@ -15,6 +17,7 @@ function Stream() {
   let audioProducer;
   let videoProducer;
   let consumer;
+  let isProducer = false;
 
   let params = {
     // mediasoup params
@@ -41,32 +44,33 @@ function Stream() {
     },
   };
 
+  // stream 관련
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const audioParams = useRef(null);
   const videoParams = useRef({ params });
 
-  // 4.로컬 비디오 엘리먼트에 획득한 로컬 사용자 스트림 대입
-  const streamSuccess = useCallback(
-    (stream) => {
-      localVideoRef.current.srcObject = stream;
+  // S0.Stream 페이지 처음 랜더링 시
+  useEffect(() => {
+    socket.current = socketIOClient(MEDIASOUP);
 
-      audioParams.current = {
-        track: stream.getAudioTracks()[0],
-        ...audioParams.current,
-      };
-      videoParams.current = {
-        track: stream.getVideoTracks()[0],
-        ...videoParams.current,
-      };
+    // S1.소켓 연결 완료 수신
+    socket.current.on(
+      "connection-success",
+      async ({ socketId: id, existsProducer }) => {
+        console.log(`connection-success: ${socketId}, ${existsProducer}`);
+        socketId.current = id;
+        console.log(`SocketId is ${socketId.current}`);
+      }
+    );
 
-      // joinRoom();
-    },
-    [audioParams, videoParams]
-  );
+    return () => {
+      socket.current.disconnect();
+    };
+  }, []);
 
-  // 3.로컬 사용자 스트림 획득
-  const getLocalStream = useCallback(() => {
+  // P1.로컬 사용자 스트림 획득
+  const getLocalStream = () => {
     navigator.mediaDevices
       .getUserMedia({
         audio: true,
@@ -85,27 +89,48 @@ function Stream() {
       .catch((error) => {
         console.log(error.message);
       });
-  }, [streamSuccess]);
+  };
 
-  useEffect(() => {
-    const socketIo = socketIOClient(MEDIASOUP);
-    setSocket(socketIo);
+  // P2.로컬 비디오 엘리먼트에 획득한 로컬 사용자 스트림 대입
+  const streamSuccess = (stream) => {
+    localVideoRef.current.srcObject = stream;
 
-    // 2.스트림 준비 완료 수신
-    socketIo.on("connection-success", async ({ socketId }) => {
-      console.log(`Connected with Socket ID: ${socketId}`);
-      setSocketId(socketId);
-
-      // 3.로컬 사용자 스트림 획득
-      //getLocalStream();
-    });
-
-    return () => {
-      socketIo.disconnect();
+    audioParams.current = {
+      track: stream.getAudioTracks()[0],
+      ...audioParams.current,
     };
-  }, [getLocalStream]);
+    videoParams.current = {
+      track: stream.getVideoTracks()[0],
+      ...videoParams.current,
+    };
 
-  // Device 생성
+    goConnect(true);
+  };
+
+  // C1.소비자인 상태로 goConnect 호출
+  const goConsume = () => {
+    goConnect(false);
+  };
+
+  // T1.생산자인지 소비자인지 판단
+  const goConnect = (producerOrConsumer) => {
+    isProducer = producerOrConsumer;
+    device === undefined ? getRtpCapabilities() : goCreateTransport();
+  };
+
+  // T2.RtpCapabilities 서버에게 요청
+  const getRtpCapabilities = () => {
+    socket.current.emit("createRoom", (data) => {
+      console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
+
+      rtpCapabilities = data.rtpCapabilities;
+
+      createDevice();
+    });
+    console.log("getRtpCapabilities");
+  };
+
+  // T3.Device 생성
   const createDevice = async () => {
     try {
       device = new mediasoupClient.Device();
@@ -115,6 +140,8 @@ function Stream() {
       });
 
       console.log("RTP Capabilities", device.rtpCapabilities);
+
+      goCreateTransport();
     } catch (error) {
       console.log(error);
       if (error.name === "UnsupportedError")
@@ -122,65 +149,72 @@ function Stream() {
     }
   };
 
-  // RtpCapabilities 서버에게 요청
-  const getRtpCapabilities = () => {
-    socket.emit("getRtpCapabilities", (data) => {
-      console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
-
-      rtpCapabilities = data.rtpCapabilities;
-    });
+  // T4.생성자, 소비자에 맞는 Transport 생성 함수 호출
+  const goCreateTransport = () => {
+    isProducer ? createSendTransport() : createRecvTransport();
   };
 
+  // P3.SendTransport 생성 요청, 저장, 수신
   const createSendTransport = () => {
-    socket.emit("createWebRtcTransport", { sender: true }, ({ params }) => {
-      if (params.error) {
-        console.log(params.error);
-        return;
-      }
-
-      console.log(params);
-
-      producerTransport = device.createSendTransport(params);
-
-      producerTransport.on(
-        "connect",
-        async ({ dtlsParameters }, callback, errback) => {
-          try {
-            await socket.emit("transport-connect", {
-              //transportId: producerTransport.id,
-              dtlsParameters: dtlsParameters,
-            });
-
-            callback();
-          } catch (error) {
-            errback(error);
-          }
+    socket.current.emit(
+      "createWebRtcTransport",
+      { sender: true },
+      ({ params }) => {
+        if (params.error) {
+          console.log(params.error);
+          return;
         }
-      );
 
-      producerTransport.on("produce", async (parameters, callback, errback) => {
-        console.log(parameters);
+        console.log(params);
 
-        try {
-          await socket.emit(
-            "transport-produce",
-            {
-              //   transportId: producerTransport.id,
-              kind: parameters.kind,
-              rtpParameters: parameters.rtpParameters,
-              appData: parameters.appData,
-            },
-            ({ id }) => {
-              callback({ id });
+        producerTransport = device.createSendTransport(params);
+
+        producerTransport.on(
+          "connect",
+          async ({ dtlsParameters }, callback, errback) => {
+            try {
+              await socket.current.emit("transport-connect", {
+                //transportId: producerTransport.id,
+                dtlsParameters: dtlsParameters,
+              });
+
+              callback();
+            } catch (error) {
+              errback(error);
             }
-          );
-        } catch (error) {
-          errback(error);
-        }
-      });
-    });
+          }
+        );
+
+        producerTransport.on(
+          "produce",
+          async (parameters, callback, errback) => {
+            console.log(parameters);
+
+            try {
+              await socket.current.emit(
+                "transport-produce",
+                {
+                  //   transportId: producerTransport.id,
+                  kind: parameters.kind,
+                  rtpParameters: parameters.rtpParameters,
+                  appData: parameters.appData,
+                },
+                ({ id }) => {
+                  callback({ id });
+                }
+              );
+            } catch (error) {
+              errback(error);
+            }
+          }
+        );
+
+        connectSendTransport();
+      }
+    );
   };
 
+  // P4.SendTrasport 연결
   const connectSendTransport = async () => {
     try {
       audioProducer = await producerTransport.produce(audioParams.current);
@@ -196,8 +230,9 @@ function Stream() {
     }
   };
 
+  // C2.RecvTransport 생성 요청, 저장, 수신
   const createRecvTransport = async () => {
-    await socket.emit(
+    await socket.current.emit(
       "createWebRtcTransport",
       { sender: false },
       ({ params }) => {
@@ -214,7 +249,7 @@ function Stream() {
           "connect",
           async ({ dtlsParameters }, callback, errback) => {
             try {
-              await socket.emit("transport-recv-connect", {
+              await socket.current.emit("transport-recv-connect", {
                 // transportId: consumerTransport.id,
                 dtlsParameters,
               });
@@ -225,15 +260,15 @@ function Stream() {
             }
           }
         );
+
+        connectRecvTransport();
       }
     );
   };
 
+  // C3.RecvTrasport 연결
   const connectRecvTransport = async () => {
-    // for consumer, we need to tell the server first
-    // to create a consumer based on the rtpCapabilities and consume
-    // if the router can consume, it will send back a set of params as below
-    await socket.emit(
+    await socket.current.emit(
       "consume",
       {
         rtpCapabilities: device.rtpCapabilities,
@@ -256,7 +291,7 @@ function Stream() {
 
         remoteVideoRef.current.srcObject = new MediaStream([track]);
 
-        socket.emit("consumer-resume");
+        socket.current.emit("consumer-resume");
       }
     );
   };
@@ -266,16 +301,9 @@ function Stream() {
       {/* 로컬 비디오 UI */}
       <video ref={localVideoRef} autoPlay playsInline></video>
       <video ref={remoteVideoRef} autoPlay playsInline></video>
-      {/* 3.로컬 사용자 스트림 획득 */}
-      <button onClick={getLocalStream} id="btnPublish">
-        getLocalStream
-      </button>
-      <button onClick={getRtpCapabilities}>getRtpCapabilities</button>
-      <button onClick={createDevice}>createDevice</button>
-      <button onClick={createSendTransport}>createSendTransport</button>
-      <button onClick={connectSendTransport}>connectSendTransport</button>
-      <button onClick={createRecvTransport}>createRecvTransport</button>
-      <button onClick={connectRecvTransport}>connectRecvTransport</button>
+      {/* 스트림 관련 */}
+      <button onClick={getLocalStream}>Publish</button>
+      <button onClick={goConsume}>Consume</button>
     </div>
   );
 }

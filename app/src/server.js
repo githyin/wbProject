@@ -9,7 +9,6 @@ import multer from "multer";
 import path from "path"; // path 모듈 추가
 import fs from "fs"; // fs 모듈 추가
 import net from "net";
-import { send } from "process";
 
 //express 인스턴스 생성
 const app = express();
@@ -180,6 +179,7 @@ peers.on("connection", async (socket) => {
   // 3.해당 socket에게 성공 이벤트 전송
   socket.emit("connection-success", {
     socketId: socket.id,
+    existsProducer: producer ? true : false,
   });
 
   // ?.socket 접속 해제 시
@@ -188,15 +188,22 @@ peers.on("connection", async (socket) => {
     console.log("peers disconnect");
   });
 
-  // 5.router 생성
-  router = await worker.createRouter({ mediaCodecs });
+  socket.on("createRoom", async (callback) => {
+    if (router === undefined) {
+      // 5.router 생성
+      router = await worker.createRouter({ mediaCodecs });
+      console.log(`Router ID: ${router.id}`);
+    }
 
-  socket.on("getRtpCapabilities", (callback) => {
+    getRtpCapabilities(callback);
+  });
+
+  const getRtpCapabilities = (callback) => {
     const rtpCapabilities = router.rtpCapabilities;
     console.log("rtp Capabilities", rtpCapabilities);
 
     callback({ rtpCapabilities });
-  });
+  };
 
   socket.on("createWebRtcTransport", async ({ sender }, callback) => {
     console.log(`Is this a sender request? ${sender}`);
