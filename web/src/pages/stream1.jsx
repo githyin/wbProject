@@ -13,10 +13,10 @@ function Stream() {
   let device;
   let rtpCapabilities;
   let producerTransport;
-  let consumerTransport;
+  let consumerTransports = [];
   let audioProducer;
   let videoProducer;
-  let consumer;
+  // let consumer;
   let isProducer = false;
 
   let params = {
@@ -112,30 +112,8 @@ function Stream() {
   // T1.생산자인지 소비자인지 판단
   const goConnect = (producerOrConsumer) => {
     isProducer = producerOrConsumer;
-    if (isProducer) {
-      createRoom();
-    } else {
-      joinRoom();
-    }
+    joinRoom();
     //device === undefined ? getRtpCapabilities() : goCreateTransport();
-  };
-
-  // P3.createRoom 서버에게 요청
-  const createRoom = () => {
-    console.log(`createRoom, roomName is ${roomNameRef.current.value}`);
-    socket.current.emit(
-      "createRoom",
-      { roomName: roomNameRef.current.value, socketId: socketId.current },
-      (data) => {
-        console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
-
-        // getRtoCapabilities
-        rtpCapabilities = data.rtpCapabilities;
-
-        createDevice();
-      }
-    );
-    console.log("createRoom");
   };
 
   // C2.joinRoom 서버에게 요청
@@ -143,7 +121,7 @@ function Stream() {
     console.log(`joinRoom, roomName is ${roomNameRef.current.value}`);
     socket.current.emit(
       "joinRoom",
-      { roomName: roomNameRef.current.value, socketId: socketId.current },
+      { roomName: roomNameRef.current.value },
       (data) => {
         console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
 
@@ -177,14 +155,14 @@ function Stream() {
 
   // T3.생성자, 소비자에 맞는 Transport 생성 함수 호출
   const goCreateTransport = () => {
-    isProducer ? createSendTransport() : createRecvTransport();
+    isProducer ? createSendTransport() : getProducers();
   };
 
   // P3.SendTransport 생성 요청, 저장, 수신
   const createSendTransport = () => {
     socket.current.emit(
       "createWebRtcTransport",
-      { sender: true },
+      { consumer: false },
       ({ params }) => {
         if (params.error) {
           console.log(params.error);
@@ -256,48 +234,77 @@ function Stream() {
     }
   };
 
+  const getProducers = () => {
+    socket.current.emit("getProducers", (producerIds) => {
+      console.log(producerIds);
+      // for each of the producer create a consumer
+      // producerIds.forEach(id => signalNewConsumerTransport(id))
+      producerIds.forEach(signalNewConsumerTransport);
+    });
+  };
+
   // C2.RecvTransport 생성 요청, 저장, 수신
-  const createRecvTransport = async () => {
+  const signalNewConsumerTransport = async (remoteProducerId) => {
     await socket.current.emit(
       "createWebRtcTransport",
-      { sender: false },
+      { consumer: true },
       ({ params }) => {
+        // The server sends back params needed
+        // to create Send Transport on the client side
         if (params.error) {
           console.log(params.error);
           return;
         }
+        console.log(`PARAMS... ${params}`);
 
-        console.log(params);
-
-        consumerTransport = device.createRecvTransport(params);
+        let consumerTransport;
+        try {
+          consumerTransport = device.createRecvTransport(params);
+        } catch (error) {
+          // exceptions:
+          // {InvalidStateError} if not loaded
+          // {TypeError} if wrong arguments.
+          console.log(error);
+          return;
+        }
 
         consumerTransport.on(
           "connect",
           async ({ dtlsParameters }, callback, errback) => {
             try {
+              // Signal local DTLS parameters to the server side transport
+              // see server's socket.on('transport-recv-connect', ...)
               await socket.current.emit("transport-recv-connect", {
-                // transportId: consumerTransport.id,
                 dtlsParameters,
+                serverConsumerTransportId: params.id,
               });
 
+              // Tell the transport that parameters were transmitted.
               callback();
             } catch (error) {
+              // Tell the transport that something was wrong
               errback(error);
             }
           }
         );
 
-        connectRecvTransport();
+        connectRecvTransport(consumerTransport, remoteProducerId, params.id);
       }
     );
   };
 
   // C3.RecvTrasport 연결
-  const connectRecvTransport = async () => {
+  const connectRecvTransport = async (
+    consumerTransport,
+    remoteProducerId,
+    serverConsumerTransportId
+  ) => {
     await socket.current.emit(
       "consume",
       {
         rtpCapabilities: device.rtpCapabilities,
+        remoteProducerId,
+        serverConsumerTransportId,
       },
       async ({ params }) => {
         if (params.error) {
@@ -305,33 +312,73 @@ function Stream() {
           return;
         }
 
-        console.log(params);
-        consumer = await consumerTransport.consume({
+        console.log(`Consumer Params ${params}`);
+        // then consume with the local consumer transport
+        // which creates a consumer
+        const consumer = await consumerTransport.consume({
           id: params.id,
           producerId: params.producerId,
           kind: params.kind,
           rtpParameters: params.rtpParameters,
         });
 
+        consumerTransports = [
+          ...consumerTransports,
+          {
+            consumerTransport,
+            serverConsumerTransportId: params.id,
+            producerId: remoteProducerId,
+            consumer,
+          },
+        ];
+
+        // create a new div element for the new consumer media
+        const newElem = document.createElement("div");
+        newElem.setAttribute("id", `td-${remoteProducerId}`);
+
+        if (params.kind === "audio") {
+          //append to the audio container
+          newElem.innerHTML =
+            '<audio id="' +
+            remoteProducerId +
+            '" autoplay playsInline></audio>';
+        } else {
+          //append to the video container
+          newElem.setAttribute("class", "remoteVideo");
+          newElem.innerHTML =
+            '<video id="' +
+            remoteProducerId +
+            '" autoplay playsInline></video>';
+        }
+
+        const videoContainer = document.getElementById("videoContainer");
+
+        videoContainer.appendChild(newElem);
+
+        // destructure and retrieve the video track from the producer
         const { track } = consumer;
 
-        streamRef.current.srcObject = new MediaStream([track]);
+        document.getElementById(remoteProducerId).srcObject = new MediaStream([
+          track,
+        ]);
 
-        // 로그에 트랙 정보 출력
-        console.log("Consumer Track Info:", track);
-
-        socket.current.emit("consumer-resume");
+        socket.current.emit("consumer-resume", {
+          serverConsumerId: params.serverConsumerId,
+        });
       }
     );
   };
 
   return (
-    <div>
-      <video ref={streamRef} autoPlay playsInline></video>
-      <input ref={roomNameRef} placeholder="Enter room name" />
-      <button onClick={goStream}>Publish</button>
-      <button onClick={goConsume}>Consume</button>
-    </div>
+    <>
+      <div id="videoContainer"></div>
+      <div>
+        <video ref={streamRef} autoPlay playsInline></video>
+        <input ref={roomNameRef} placeholder="Enter room name" />
+        <button onClick={goStream}>Publish</button>
+        <button onClick={goConsume}>Consume</button>
+      </div>
+    </>
   );
 }
 
