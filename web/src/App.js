@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import socketIOClient from "socket.io-client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Home from "./pages/home";
-import Stream from "./pages/stream1";
+import Stream from "./pages/stream";
 import Upload from "./pages/upload";
 import Chat from "./pages/chat";
 const ENDPOINT = "http://localhost:8000";

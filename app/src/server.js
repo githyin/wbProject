@@ -1,14 +1,12 @@
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
-//import { createWorker } from "mediasoup";
 import * as mediasoup from "mediasoup";
 import cors from "cors";
 import { instrument } from "@socket.io/admin-ui";
 import multer from "multer";
 import path from "path"; // path 모듈 추가
 import fs from "fs"; // fs 모듈 추가
-import { spawn } from "child_process";
 import net from "net";
 
 //express 인스턴스 생성
@@ -204,7 +202,7 @@ ms.on("connection", async (socket) => {
   socket.on("createWebRtcTransport", async ({ consumer }, callback) => {
     // get Room Name from Peer's properties
     // peers 속성에서 roomName 획득
-    const roomName = peers[socket.id].roomName;
+    const { roomName } = peers[socket.id];
 
     // get Router (Room) object this peer is in based on RoomName
     // roomName을 기반으로 해당 peer의 router 획득
@@ -277,18 +275,6 @@ ms.on("connection", async (socket) => {
     return producerTransport.transport;
   };
 
-  // 사용 가능한 포트를 관리하는 객체
-  const portManager = {
-    currentPort: 59153,
-    maxPort: 65535,
-    getNextPort: function () {
-      if (this.currentPort > this.maxPort) {
-        throw new Error("No more ports available");
-      }
-      return this.currentPort++;
-    },
-  };
-
   socket.on(
     "transport-produce",
     async ({ kind, rtpParameters, appData }, callback) => {
@@ -304,54 +290,9 @@ ms.on("connection", async (socket) => {
 
       console.log("Producer ID: ", producer.id, producer.kind);
 
-      let ffmpeg;
-      if (kind === "audio") {
-        const router = rooms[roomName].router;
-        const filePath = path.join(__dirname, `audio_${producer.id}.wav`); // WAV 파일 저장 경로 지정
-
-        // Producer가 생성된 후에 PlainTransport를 생성하고 FFmpeg와 연결합니다.
-        const plainTransport = await router.createPlainTransport({
-          listenIp: "127.0.0.1",
-          rtcpMux: false,
-          comedia: true,
-        });
-
-        const port = portManager.getNextPort();
-
-        await plainTransport.connect({
-          ip: "127.0.0.1",
-          port: port,
-          rtcpPort: port + 1,
-        }); // 포트를 worker가 사용할 수 있는 범위로 변경합니다.
-
-        const { tuple } = plainTransport;
-        ffmpeg = spawn(
-          "ffmpeg",
-          [
-            "-protocol_whitelist",
-            "pipe,udp,rtp",
-            "-f",
-            "rtp",
-            "-i",
-            `rtp://${tuple.localIp}:${tuple.localPort}`,
-            "-acodec",
-            "libopus",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            filePath,
-          ],
-          { stdio: "inherit" }
-        );
-      } else {
-        console.log(`Producer kind is ${kind}`);
-      }
-
       producer.on("transportclose", () => {
         console.log("transport for this producer closed ");
         producer.close();
-        ffmpeg.kill("SIGINT");
       });
 
       // Send back to the client the Producer's id

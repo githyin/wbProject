@@ -8,29 +8,71 @@ import {
   makeStyles,
 } from "@material-ui/core";
 import { Link } from "react-router-dom";
+import image from "../images/image.jpg";
 
 const useStyles = makeStyles({
   root: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    width: 275,
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "column",
+    height: "100vh",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  body: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "column",
   },
   title: {
-    fontSize: 21,
-    color: "black",
+    fontSize: 36,
+    fontWeight: "bold",
+    color: "#f50057",
+  },
+  card: {
+    width: 1200,
+    height: 700,
+    padding: 20,
+    textAlign: "center",
+    display: "flex",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   description: {
-    fontSize: 14,
-    color: "#002984",
+    fontSize: 16,
+    color: "black",
+    marginBottom: 20,
+  },
+  buttonContainer: {
+    display: "flex",
+    justifyContent: "center", // 버튼들을 좌우로 정렬합니다.
+    gap: 10,
   },
   button: {
-    backgroundColor: "#3f51b5",
+    backgroundColor: "#f50057",
     color: "white",
     "&:hover": {
-      backgroundColor: "#002984",
+      backgroundColor: "#f20012",
     },
+  },
+  image: {
+    width: 700,
+    height: 700,
+    marginBottom: 20,
+  },
+  leftContent: {
+    flex: 2, // leftContent의 가로 크기를 2로 설정합니다.
+    marginRight: 40,
+  },
+  rightContent: {
+    flex: 1, // rightContent의 가로 크기를 1로 설정합니다.
   },
 });
 
@@ -44,8 +86,8 @@ function Home() {
   const buttonLinks = ["/streaming", "/upload", "/chat"];
 
   return (
-    <Card className={classes.root}>
-      <CardContent>
+    <div className={classes.root}>
+      <div className={classes.header}>
         <Typography
           className={classes.title}
           color="textSecondary"
@@ -53,27 +95,40 @@ function Home() {
         >
           {title}
         </Typography>
-        <Typography
-          className={classes.description}
-          variant="body2"
-          component="p"
-        >
-          {description}
-        </Typography>
-      </CardContent>
-      <CardActions>
-        {buttonLabels.map((label, index) => (
-          <Button
-            size="small"
-            component={Link}
-            to={buttonLinks[index]}
-            key={index}
-          >
-            {label}
-          </Button>
-        ))}
-      </CardActions>
-    </Card>
+      </div>
+      <div className={classes.body}>
+        <Card className={classes.card}>
+          <CardContent className={classes.leftContent}>
+            <div className={classes.image}>
+              <img className={classes.image} src={image} alt="이미지" />
+            </div>
+          </CardContent>
+          <CardContent className={classes.rightContent}>
+            <Typography
+              className={classes.description}
+              variant="body2"
+              component="p"
+            >
+              {description}
+            </Typography>
+            <CardActions className={classes.buttonContainer}>
+              {/* 버튼들을 좌우로 정렬합니다. */}
+              {buttonLabels.map((label, index) => (
+                <Button
+                  className={classes.button}
+                  size="small"
+                  component={Link}
+                  to={buttonLinks[index]}
+                  key={index}
+                >
+                  {label}
+                </Button>
+              ))}
+            </CardActions>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }
 

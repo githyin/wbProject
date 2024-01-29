@@ -1,10 +1,73 @@
 import React, { useEffect, useRef } from "react";
 import socketIOClient from "socket.io-client";
 import * as mediasoupClient from "mediasoup-client";
+import {
+  Card,
+  CardContent,
+  Typography,
+  makeStyles,
+  Button,
+} from "@material-ui/core";
 
 const MEDIASOUP = "http://localhost:8000/mediasoup";
 
+// ui
+const useStyles = makeStyles({
+  root: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "column",
+    height: "100vh",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  body: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "column",
+  },
+  title: {
+    fontSize: 36,
+    fontWeight: "bold",
+    color: "#f50057",
+  },
+  subtitle: {
+    fontSize: 21,
+    color: "black",
+  },
+  card: {
+    width: 1200,
+    height: 700,
+    padding: 20,
+    textAlign: "center",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  dropzone: {
+    border: "2px dashed #eeeeee",
+    borderRadius: "5px",
+    padding: "30px",
+    textAlign: "center",
+    color: "#bdbdbd",
+    cursor: "pointer",
+    width: "500px", // 원하는 가로 크기
+    height: "400px", // 원하는 세로 크기
+  },
+});
+
 function Stream() {
+  // ui 관련
+  const classes = useStyles();
+  const title = "STREAM";
+
   // socket 관련
   const socket = useRef();
   const socketId = useRef();
@@ -13,10 +76,11 @@ function Stream() {
   let device;
   let rtpCapabilities;
   let producerTransport;
-  let consumerTransport = [];
+  let consumerTransports = [];
   let audioProducer;
   let videoProducer;
-  // let isProducer = false;
+  // let consumer;
+  let isProducer = false;
 
   let params = {
     // mediasoup params
@@ -44,9 +108,8 @@ function Stream() {
   };
 
   // stream 관련
-  const roomName = "";
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
+  const roomNameRef = useRef(null);
+  const streamRef = useRef(null);
   const audioParams = useRef(null);
   const videoParams = useRef({ params });
 
@@ -55,14 +118,11 @@ function Stream() {
     socket.current = socketIOClient(MEDIASOUP);
 
     // S1.소켓 연결 완료 수신
-    socket.current.on(
-      "connection-success",
-      async ({ socketId: id, existsProducer }) => {
-        console.log(`connection-success: ${socketId}, ${existsProducer}`);
-        socketId.current = id;
-        console.log(`SocketId is ${socketId.current}`);
-      }
-    );
+    socket.current.on("connection-success", async ({ socketId: id }) => {
+      console.log(`connection-success: ${socketId}`);
+      socketId.current = id;
+      console.log(`SocketId is ${socketId.current}`);
+    });
 
     return () => {
       socket.current.disconnect();
@@ -70,7 +130,7 @@ function Stream() {
   }, []);
 
   // P1.로컬 사용자 스트림 획득
-  const getLocalStream = () => {
+  const goStream = () => {
     navigator.mediaDevices
       .getUserMedia({
         audio: true,
@@ -93,7 +153,7 @@ function Stream() {
 
   // P2.로컬 비디오 엘리먼트에 획득한 로컬 사용자 스트림 대입
   const streamSuccess = (stream) => {
-    localVideoRef.current.srcObject = stream;
+    streamRef.current.srcObject = stream;
 
     audioParams.current = {
       track: stream.getAudioTracks()[0],
@@ -104,43 +164,40 @@ function Stream() {
       ...videoParams.current,
     };
 
+    goConnect(true);
+  };
+
+  // C1.소비자인 상태로 goConnect 호출
+  const goConsume = () => {
+    goConnect(false);
+  };
+
+  // T1.생산자인지 소비자인지 판단
+  const goConnect = (producerOrConsumer) => {
+    isProducer = producerOrConsumer;
     joinRoom();
+    //device === undefined ? getRtpCapabilities() : goCreateTransport();
   };
 
+  // C2.joinRoom 서버에게 요청
   const joinRoom = () => {
-    socket.emit("joinRoome", { roomName }, (data) => {
-      console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
+    console.log(`joinRoom, roomName is ${roomNameRef.current.value}`);
+    socket.current.emit(
+      "joinRoom",
+      { roomName: roomNameRef.current.value },
+      (data) => {
+        console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
 
-      rtpCapabilities = data.rtpCapabilities;
+        // getRtoCapabilities
+        rtpCapabilities = data.rtpCapabilities;
 
-      createDevice();
-    });
+        createDevice();
+      }
+    );
+    console.log("joinRoom");
   };
 
-  // // C1.소비자인 상태로 goConnect 호출
-  // const goConsume = () => {
-  //   goConnect(false);
-  // };
-
-  // // T1.생산자인지 소비자인지 판단
-  // const goConnect = (producerOrConsumer) => {
-  //   isProducer = producerOrConsumer;
-  //   device === undefined ? getRtpCapabilities() : goCreateTransport();
-  // };
-
-  // // T2.RtpCapabilities 서버에게 요청
-  // const getRtpCapabilities = () => {
-  //   socket.current.emit("createRoom", (data) => {
-  //     console.log(`Router RTP Capabilities... ${data.rtpCapabilities}`);
-
-  //     rtpCapabilities = data.rtpCapabilities;
-
-  //     createDevice();
-  //   });
-  //   console.log("getRtpCapabilities");
-  // };
-
-  // T3.Device 생성
+  // T2.Device 생성
   const createDevice = async () => {
     try {
       device = new mediasoupClient.Device();
@@ -149,10 +206,9 @@ function Stream() {
         routerRtpCapabilities: rtpCapabilities,
       });
 
-      console.log("RTP Capabilities", device.rtpCapabilities);
+      console.log("Device RTP Capabilities", device.rtpCapabilities);
 
-      // goCreateTransport();
-      createSendTransport();
+      goCreateTransport();
     } catch (error) {
       console.log(error);
       if (error.name === "UnsupportedError")
@@ -160,20 +216,9 @@ function Stream() {
     }
   };
 
-  // // T4.생성자, 소비자에 맞는 Transport 생성 함수 호출
-  // const goCreateTransport = () => {
-  //   isProducer ? createSendTransport() : createRecvTransport();
-  // };
-
-  socket.on("new-producer", ({ producerId }) =>
-    signalNewConsumerTransport(producerId)
-  );
-
-  const getProducers = () => {
-    socket.emit("getProducers", (producerIds) => {
-      //producerIds.forEach(id => signalNewConsumerTransport(id));
-      producerIds.forEach(signalNewConsumerTransport);
-    });
+  // T3.생성자, 소비자에 맞는 Transport 생성 함수 호출
+  const goCreateTransport = () => {
+    isProducer ? createSendTransport() : getProducers();
   };
 
   // P3.SendTransport 생성 요청, 저장, 수신
@@ -221,10 +266,8 @@ function Stream() {
                   rtpParameters: parameters.rtpParameters,
                   appData: parameters.appData,
                 },
-                ({ id, producersExist }) => {
+                ({ id }) => {
                   callback({ id });
-
-                  if (producersExist) getProducers();
                 }
               );
             } catch (error) {
@@ -254,32 +297,55 @@ function Stream() {
     }
   };
 
+  const getProducers = () => {
+    socket.current.emit("getProducers", (producerIds) => {
+      console.log(producerIds);
+      // for each of the producer create a consumer
+      // producerIds.forEach(id => signalNewConsumerTransport(id))
+      producerIds.forEach(signalNewConsumerTransport);
+    });
+  };
+
   // C2.RecvTransport 생성 요청, 저장, 수신
   const signalNewConsumerTransport = async (remoteProducerId) => {
     await socket.current.emit(
       "createWebRtcTransport",
       { consumer: true },
       ({ params }) => {
+        // The server sends back params needed
+        // to create Send Transport on the client side
         if (params.error) {
           console.log(params.error);
           return;
         }
+        console.log(`PARAMS... ${params}`);
 
-        console.log(params);
-
-        consumerTransport = device.createRecvTransport(params);
+        let consumerTransport;
+        try {
+          consumerTransport = device.createRecvTransport(params);
+        } catch (error) {
+          // exceptions:
+          // {InvalidStateError} if not loaded
+          // {TypeError} if wrong arguments.
+          console.log(error);
+          return;
+        }
 
         consumerTransport.on(
           "connect",
           async ({ dtlsParameters }, callback, errback) => {
             try {
+              // Signal local DTLS parameters to the server side transport
+              // see server's socket.on('transport-recv-connect', ...)
               await socket.current.emit("transport-recv-connect", {
-                // transportId: consumerTransport.id,
                 dtlsParameters,
+                serverConsumerTransportId: params.id,
               });
 
+              // Tell the transport that parameters were transmitted.
               callback();
             } catch (error) {
+              // Tell the transport that something was wrong
               errback(error);
             }
           }
@@ -309,7 +375,9 @@ function Stream() {
           return;
         }
 
-        console.log(params);
+        console.log(`Consumer Params ${params}`);
+        // then consume with the local consumer transport
+        // which creates a consumer
         const consumer = await consumerTransport.consume({
           id: params.id,
           producerId: params.producerId,
@@ -327,55 +395,69 @@ function Stream() {
           },
         ];
 
+        // create a new div element for the new consumer media
         const newElem = document.createElement("div");
         newElem.setAttribute("id", `td-${remoteProducerId}`);
-        newElem.setAttribute("class", "remoteVideo");
-        newElem.innerHTML =
-          '<video id="' +
-          remoteProducerId +
-          '" autoplay class="video" ></video>';
+
+        if (params.kind === "audio") {
+          //append to the audio container
+          newElem.innerHTML =
+            '<audio id="' +
+            remoteProducerId +
+            '" autoplay playsInline></audio>';
+        } else {
+          //append to the video container
+          newElem.setAttribute("class", "remoteVideo");
+          newElem.innerHTML =
+            '<video id="' +
+            remoteProducerId +
+            '" autoplay playsInline></video>';
+        }
+
+        const videoContainer = document.getElementById("videoContainer");
+
         videoContainer.appendChild(newElem);
 
+        // destructure and retrieve the video track from the producer
         const { track } = consumer;
 
         document.getElementById(remoteProducerId).srcObject = new MediaStream([
           track,
         ]);
 
-        // remoteVideoRef.current.srcObject = new MediaStream([track]);
-
-        // socket.current.emit("consumer-resume");
-        socket.emit("consumer-resume", {
+        socket.current.emit("consumer-resume", {
           serverConsumerId: params.serverConsumerId,
         });
       }
     );
   };
 
-  socket.on("producer-closed", ({ remoteProducerId }) => {
-    const producerToClose = consumerTransports.find(
-      (transportData) => transportData.producerId === remoteProducerId
-    );
-    producerToClose.consumerTransport.close();
-    producerToClose.consumer.close();
-
-    consumerTransports = consumerTransports.filter(
-      (transportData) => transportData.producerId !== remoteProducerId
-    );
-
-    videoContainer.removeChild(
-      document.getElementById(`td-${remoteProducerId}`)
-    );
-  });
-
   return (
-    <div>
-      {/* 로컬 비디오 UI */}
-      <video ref={localVideoRef} autoPlay playsInline></video>
-      <video ref={remoteVideoRef} autoPlay playsInline></video>
-      {/* 스트림 관련 */}
-      <button onClick={getLocalStream}>Publish</button>
-      <button onClick={goConsume}>Consume</button>
+    <div className={classes.root}>
+      <div className={classes.header}>
+        <Typography
+          className={classes.title}
+          color="textSecondary"
+          gutterBottom
+        >
+          {title}
+        </Typography>
+      </div>
+      <div className={classes.body}>
+        <Card className={classes.card}>
+          <CardContent>
+            <div id="videoContainer"></div>
+          </CardContent>
+          <CardContent>
+            <div>
+              <video ref={streamRef} autoPlay playsInline></video>
+              <input ref={roomNameRef} placeholder="Enter room name" />
+              <button onClick={goStream}>Publish</button>
+              <button onClick={goConsume}>Consume</button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
