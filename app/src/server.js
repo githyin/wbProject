@@ -8,6 +8,7 @@ import { instrument } from "@socket.io/admin-ui";
 import multer from "multer";
 import path from "path"; // path 모듈 추가
 import fs from "fs"; // fs 모듈 추가
+import { spawn } from "child_process";
 import net from "net";
 
 //express 인스턴스 생성
@@ -84,8 +85,8 @@ let consumers = []; // [ { socketId1, roomName1, consumer, }, ... ]
 // 4-1.worker 생성 함수 생성
 async function createWorker() {
   worker = await mediasoup.createWorker({
-    rtcMinPort: 10000,
-    rtcMaxPort: 20000,
+    rtcMinPort: 49152,
+    rtcMaxPort: 59152,
   });
   console.log(`mediasoup worker pid: ${worker.pid}`);
 
@@ -276,10 +277,22 @@ ms.on("connection", async (socket) => {
     return producerTransport.transport;
   };
 
+  // 사용 가능한 포트를 관리하는 객체
+  const portManager = {
+    currentPort: 59153,
+    maxPort: 65535,
+    getNextPort: function () {
+      if (this.currentPort > this.maxPort) {
+        throw new Error("No more ports available");
+      }
+      return this.currentPort++;
+    },
+  };
+
   socket.on(
     "transport-produce",
     async ({ kind, rtpParameters, appData }, callback) => {
-      // call produce based on the prameters from the client
+      // call produce based on the parameters from the client
       const producer = await getTransport(socket.id).produce({
         kind,
         rtpParameters,
@@ -287,20 +300,62 @@ ms.on("connection", async (socket) => {
 
       // add producer to the producers array
       const { roomName } = peers[socket.id];
-
       addProducer(producer, roomName);
 
       console.log("Producer ID: ", producer.id, producer.kind);
 
+      let ffmpeg;
+      if (kind === "audio") {
+        const router = rooms[roomName].router;
+        const filePath = path.join(__dirname, `audio_${producer.id}.wav`); // WAV 파일 저장 경로 지정
+
+        // Producer가 생성된 후에 PlainTransport를 생성하고 FFmpeg와 연결합니다.
+        const plainTransport = await router.createPlainTransport({
+          listenIp: "127.0.0.1",
+          rtcpMux: false,
+          comedia: true,
+        });
+
+        const port = portManager.getNextPort();
+
+        await plainTransport.connect({
+          ip: "127.0.0.1",
+          port: port,
+          rtcpPort: port + 1,
+        }); // 포트를 worker가 사용할 수 있는 범위로 변경합니다.
+
+        const { tuple } = plainTransport;
+        ffmpeg = spawn(
+          "ffmpeg",
+          [
+            "-protocol_whitelist",
+            "pipe,udp,rtp",
+            "-f",
+            "rtp",
+            "-i",
+            `rtp://${tuple.localIp}:${tuple.localPort}`,
+            "-acodec",
+            "libopus",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            filePath,
+          ],
+          { stdio: "inherit" }
+        );
+      } else {
+        console.log(`Producer kind is ${kind}`);
+      }
+
       producer.on("transportclose", () => {
         console.log("transport for this producer closed ");
         producer.close();
+        ffmpeg.kill("SIGINT");
       });
 
       // Send back to the client the Producer's id
-      callback({
-        id: producer.id,
-      });
+      callback({ id: producer.id });
     }
   );
 
@@ -437,10 +492,10 @@ ms.on("connection", async (socket) => {
     await consumer
       .resume()
       .then(() => {
-        console.log("consumer.resume() 실행 완료");
+        console.log("consumer.resume() Success");
       })
       .catch((error) => {
-        console.error("consumer.resume() 실행 중 오류 발생: ", error);
+        console.error("consumer.resume() Error : ", error);
       });
   });
 });
